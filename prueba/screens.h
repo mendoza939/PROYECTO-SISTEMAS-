@@ -18,7 +18,8 @@ enum ScreensEnum {
     SCREEN_ID_FRECUENCIA_CARD = 5,
     SCREEN_ID_TEMPERATU = 6,
     SCREEN_ID_PRESIONN = 7,
-    _SCREEN_ID_LAST = 7
+    SCREEN_ID_MENU_ALTURA = 8,
+    _SCREEN_ID_LAST = 8
 };
 
 typedef struct _objects_t {
@@ -29,6 +30,7 @@ typedef struct _objects_t {
     lv_obj_t *frecuencia_card;
     lv_obj_t *temperatu;
     lv_obj_t *presionn;
+    lv_obj_t *menu_altura;
     lv_obj_t *logo1;
     lv_obj_t *btn_6;
     lv_obj_t *voler;
@@ -45,6 +47,8 @@ typedef struct _objects_t {
     lv_obj_t *temperatura_1;
     lv_obj_t *presion_a_1;
     lv_obj_t *presion_1;
+    lv_obj_t *bt_naltura;
+    lv_obj_t *presion_2;
     lv_obj_t *titulo1_2;
     lv_obj_t *btn_2;
     lv_obj_t *saturacion_2;
@@ -72,9 +76,21 @@ typedef struct _objects_t {
     lv_obj_t *temperatura;
     lv_obj_t *btn_4;
     lv_obj_t *saturacion_4;
+    lv_obj_t *arc_temp;
+    lv_obj_t *label_temp;
+    lv_obj_t *celsius;
     lv_obj_t *presio;
     lv_obj_t *btn_5;
     lv_obj_t *saturacion_5;
+    lv_obj_t *arc_presion;
+    lv_obj_t *label_presion;
+    lv_obj_t *pascales;
+    lv_obj_t *titulo_altura;
+    lv_obj_t *arc_altura;
+    lv_obj_t *btn_8;
+    lv_obj_t *saturacion_6;
+    lv_obj_t *label_altura;
+    lv_obj_t *metros;
 } objects_t;
 
 extern objects_t objects;
@@ -106,6 +122,9 @@ void tick_screen_temperatu();
 
 void create_screen_presionn();
 void tick_screen_presionn();
+
+void create_screen_menu_altura();
+void tick_screen_menu_altura();
 
 void tick_screen_by_id(enum ScreensEnum screenId);
 void tick_screen(int screen_index);

@@ -2,6 +2,7 @@
 #include <Wire.h>
 #include <Arduino_GFX_Library.h>
 #include <lvgl.h>
+#include <Adafruit_BMP085.h> 
 #include "TouchDrvGT911.hpp"
 #include "MAX30105.h"
 #include "heartRate.h" 
@@ -11,53 +12,52 @@
 #include "eez-flow.h"
 #include "vars.h"
 
-// --- CONFIGURACIÓN DE PANTALLA ---
+// --- CONSTANTES ---
+#define SEA_LEVEL_PRESSURE_HPA 101325 // Presión estándar a nivel del mar
+const int LED_DURATION = 150; 
+const long UMBRAL_PRESENCIA = 50000;
+const int TAMANO_HISTORIAL = 10;
+
+// --- OBJETOS ---
+MAX30105 particleSensor;
+Adafruit_BMP085 bmp;
+TouchDrvGT911 touch;
+
+// --- CONFIGURACIÓN PANTALLA WAVESHARE ---
 Arduino_DataBus *bus = new Arduino_SWSPI(GFX_NOT_DEFINED, 42, 2, 1, GFX_NOT_DEFINED);
 Arduino_ESP32RGBPanel *rgbpanel = new Arduino_ESP32RGBPanel(40, 39, 38, 41, 46, 3, 8, 18, 17, 14, 13, 12, 11, 10, 9, 5, 45, 48, 47, 21, 1, 10, 8, 50, 1, 10, 8, 20, 1, 12000000);
 Arduino_RGB_Display *gfx = new Arduino_RGB_Display(480, 480, rgbpanel, 1, true, bus, GFX_NOT_DEFINED, st7701_type1_init_operations, sizeof(st7701_type1_init_operations));
 
-TouchDrvGT911 touch;
+// --- VARIABLES DE CONTROL Y BIOMETRÍA ---
 static lv_disp_draw_buf_t draw_buf;
 static lv_color_t buf[480 * 40]; 
 static lv_disp_drv_t disp_drv;
 static lv_indev_drv_t indev_drv;
 
-// --- SENSOR Y BIOMETRÍA ---
-MAX30105 particleSensor;
 const byte RATE_SIZE = 2; 
 byte rates[RATE_SIZE]; 
 byte rateSpot = 0;
 long lastBeat = 0; 
 int beatAvg;
+unsigned long ledTurnOffTime = 0;
 
-// --- HISTORIAL ---
-const int TAMANO_HISTORIAL = 10;
+// --- VARIABLES HISTORIAL ---
 int historialFrecu[TAMANO_HISTORIAL];
 int indiceHistorial = 0;
-char bufferRoller[120]; // Buffer para la cadena de texto del Roller
-
-// --- VARIABLES DE CONTROL ---
-unsigned long ledTurnOffTime = 0;
-const int LED_DURATION = 150; 
-const long UMBRAL_PRESENCIA = 50000; 
+char bufferRoller[120];
 
 // --- FUNCIONES DE SOPORTE ---
+
 void actualizarVisualizacionHistorial() {
     bufferRoller[0] = '\0'; 
     char temp[15];
-    
-    // Construimos la lista: los más recientes primero
     for (int i = 0; i < TAMANO_HISTORIAL; i++) {
-        // Lógica circular para mostrar del más nuevo al más viejo
         int pos = (indiceHistorial - 1 - i + TAMANO_HISTORIAL) % TAMANO_HISTORIAL;
-        int valor = historialFrecu[pos];
-        
-        if (valor > 0) {
-            sprintf(temp, "%d BPM\n", valor);
+        if (historialFrecu[pos] > 0) {
+            sprintf(temp, "%d BPM\n", historialFrecu[pos]);
             strcat(bufferRoller, temp);
         }
     }
-    // Actualizamos el Roller en EEZ
     eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_OPCIONES_HISTORIAL, eez::Value(bufferRoller));
 }
 
@@ -73,7 +73,7 @@ void my_touchpad_read(lv_indev_drv_t * indev_drv, lv_indev_data_t * data) {
     uint8_t touched = touch.getPoint(tx, ty, 1);
     if (touched > 0) {
         data->state = LV_INDEV_STATE_PR;
-        data->point.x = 480 - ty[0]; // Mantengo tu configuración invertida actual
+        data->point.x = 480 - ty[0]; // Inversión actual del usuario
         data->point.y = 480 - tx[0];
     } else {
         data->state = LV_INDEV_STATE_REL;
@@ -109,11 +109,14 @@ void setup() {
 
     ui_init(); 
 
+    // Inicializar Sensores
     if (particleSensor.begin(Wire, I2C_SPEED_FAST)) {
         particleSensor.setup(0x1F, 4, 2, 400, 411, 4096);
     }
+    if (!bmp.begin()) {
+        Serial.println("BMP180 no detectado");
+    }
 
-    // Inicializar historial en 0
     for(int i=0; i<TAMANO_HISTORIAL; i++) historialFrecu[i] = 0;
 }
 
@@ -126,14 +129,27 @@ void loop() {
     lv_timer_handler(); 
     ui_tick();
 
-    long irValue = particleSensor.getIR();
+    // --- LECTURA BMP180 (Temperatura, Presión y Altitud) ---
+    static unsigned long lastBMP = 0;
+    if (millis() - lastBMP > 2000) {
+        float t = bmp.readTemperature();
+        float p = bmp.readPressure() / 100.0; // En hPa
+        float a = bmp.readAltitude(SEA_LEVEL_PRESSURE_HPA); // Altitud en metros
+        
+        eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_TEMP_VALOR, eez::Value(t));
+        eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_PRES_VALOR, eez::Value((int)p));
+        eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_ALT_VALOR, eez::Value((int)a));
+        
+        lastBMP = millis();
+    }
 
-    // --- GESTIÓN DEL CONTENEDOR (HAYDEDO) ---
+    // --- LÓGICA BIOMÉTRICA (MAX30102) ---
+    long irValue = particleSensor.getIR();
     bool estaPresente = (irValue > UMBRAL_PRESENCIA);
     eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_HAY_DEDO, eez::Value(estaPresente));
 
     if (estaPresente) {
-        if (checkForBeat(irValue) == true) {
+        if (checkForBeat(irValue)) {
             long delta = millis() - lastBeat;
             lastBeat = millis();
             float bpmInstant = 60 / (delta / 1000.0);
@@ -145,35 +161,35 @@ void loop() {
                 for (byte x = 0; x < RATE_SIZE; x++) beatAvg += rates[x];
                 beatAvg /= RATE_SIZE;
 
-                // --- GUARDAR EN HISTORIAL POR CADA PULSO ESTABLE ---
+                // Actualizar Historial de Frecuencia
                 historialFrecu[indiceHistorial] = beatAvg;
                 indiceHistorial = (indiceHistorial + 1) % TAMANO_HISTORIAL;
                 actualizarVisualizacionHistorial();
 
-                // Enviar datos a UI
+                // Enviar a la pantalla
                 eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_FRECUVALOR, eez::Value(beatAvg));
                 
                 int spo2 = map(irValue, 80000, 160000, 95, 99);
                 if (spo2 > 100) spo2 = 100;
                 eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_SATURACION, eez::Value(spo2));
 
-                // Alarma (Invertida para Hidden)
+                // Alarma Dinámica (Invertida para la propiedad 'Hidden')
                 int umbralSlider = eez::flow::getGlobalVariable(FLOW_GLOBAL_VARIABLE_UMBRAL_ALARMA).toInt32();
                 bool hayPeligro = (spo2 < umbralSlider);
                 eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_ALARMA, eez::Value(!hayPeligro));
 
-                // LED
+                // LED de Pulso
                 eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_FRECU_LED, eez::Value(255));
                 ledTurnOffTime = millis() + LED_DURATION;
             }
         }
     } else {
-        // Reset (Enviamos TRUE a Alarma para OCULTARLA)
+        // Limpieza de datos si se retira el dedo
         static unsigned long lastReset = 0;
         if (millis() - lastReset > 400) {
             eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_FRECUVALOR, eez::Value(0));
             eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_SATURACION, eez::Value(0));
-            eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_ALARMA, eez::Value(true));
+            eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_ALARMA, eez::Value(true)); // Ocultar
             eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_FRECU_LED, eez::Value(0));
             lastReset = millis();
         }
