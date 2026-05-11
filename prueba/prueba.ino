@@ -14,7 +14,7 @@
 
 // --- CONSTANTES ---
 #define SEA_LEVEL_PRESSURE_HPA 101325
-#define EXPANDER_ADDR 0x24 // Dirección confirmada por tu escáner
+#define EXPANDER_ADDR 0x24 
 const int LED_DURATION = 150; 
 const long UMBRAL_PRESENCIA = 50000;
 const int TAMANO_HISTORIAL = 10;
@@ -24,43 +24,36 @@ MAX30105 particleSensor;
 Adafruit_BMP085 bmp;
 TouchDrvGT911 touch;
 
-// --- CONFIGURACIÓN PANTALLA WAVESHARE ---
+// --- PANTALLA ---
 Arduino_DataBus *bus = new Arduino_SWSPI(GFX_NOT_DEFINED, 42, 2, 1, GFX_NOT_DEFINED);
 Arduino_ESP32RGBPanel *rgbpanel = new Arduino_ESP32RGBPanel(40, 39, 38, 41, 46, 3, 8, 18, 17, 14, 13, 12, 11, 10, 9, 5, 45, 48, 47, 21, 1, 10, 8, 50, 1, 10, 8, 20, 1, 12000000);
 Arduino_RGB_Display *gfx = new Arduino_RGB_Display(480, 480, rgbpanel, 2, true, bus, GFX_NOT_DEFINED, st7701_type1_init_operations, sizeof(st7701_type1_init_operations));
 
-// --- VARIABLES DE CONTROL Y BIOMETRÍA ---
 static lv_disp_draw_buf_t draw_buf;
 static lv_color_t buf[480 * 40]; 
 static lv_disp_drv_t disp_drv;
 static lv_indev_drv_t indev_drv;
 
+// --- BIOMETRÍA ---
 const byte RATE_SIZE = 2; 
 byte rates[RATE_SIZE]; 
 byte rateSpot = 0;
 long lastBeat = 0; 
 int beatAvg;
 unsigned long ledTurnOffTime = 0;
-
-// Variables para el parpadeo del buzzer
 unsigned long tiempoBuzzer = 0;
 bool estadoBuzzer = false;
 
-// --- VARIABLES HISTORIAL ---
 int historialFrecu[TAMANO_HISTORIAL];
 int indiceHistorial = 0;
 char bufferRoller[120];
 
-// --- FUNCIONES DE SOPORTE ---
+// --- FUNCIONES ---
 
 void controlarBuzzer(bool activo) {
     Wire.beginTransmission(EXPANDER_ADDR);
-    Wire.write(0x02); // Registro de salida
-    if (activo) {
-        Wire.write(0xFF); // Activa EXIO5 (y otros pines de salida)
-    } else {
-        Wire.write(0x00); // Apaga todo
-    }
+    Wire.write(0x02); 
+    Wire.write(activo ? 0xFF : 0x00); 
     Wire.endTransmission();
 }
 
@@ -86,19 +79,11 @@ void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color
 
 void my_touchpad_read(lv_indev_drv_t * indev_drv, lv_indev_data_t * data) {
     int16_t tx[5], ty[5];
-    uint8_t touched = touch.getPoint(tx, ty, 1); // Leemos el sensor
-    
+    uint8_t touched = touch.getPoint(tx, ty, 1);
     if (touched > 0) {
         data->state = LV_INDEV_STATE_PR;
-        
-        // Mapeo corregido según el ejemplo (Rotación 2):
-        // X pantalla = Ancho - X sensor
-        // Y pantalla = Alto - Y sensor
         data->point.x = 480 - tx[0]; 
         data->point.y = 480 - ty[0];
-        
-        // Opcional: Monitor serie para verificar en tiempo real
-        // Serial.printf("Touch X: %d, Y: %d\n", data->point.x, data->point.y);
     } else {
         data->state = LV_INDEV_STATE_REL;
     }
@@ -108,13 +93,10 @@ void setup() {
     Serial.begin(115200);
     Wire.begin(15, 7);
 
-    // Inicialización del Expansor para el Buzzer
     Wire.beginTransmission(EXPANDER_ADDR);
-    Wire.write(0x03); 
-    Wire.write(0x00); // Configuramos como SALIDA (importante para que suene)
+    Wire.write(0x03); Wire.write(0x00); 
     Wire.endTransmission();
-    
-    controlarBuzzer(false); // Asegurar que inicie apagado
+    controlarBuzzer(false);
 
     gfx->begin();
     gfx->fillScreen(RGB565_BLACK);
@@ -139,12 +121,13 @@ void setup() {
     if (particleSensor.begin(Wire, I2C_SPEED_FAST)) {
         particleSensor.setup(0x1F, 4, 2, 400, 411, 4096);
     }
-    if (!bmp.begin()) Serial.println("BMP180 no detectado");
+    bmp.begin();
 
     for(int i=0; i<TAMANO_HISTORIAL; i++) historialFrecu[i] = 0;
 }
 
 void loop() {
+    // 1. UI
     static uint32_t last_tick = 0;
     if (millis() - last_tick > 5) {
         lv_tick_inc(millis() - last_tick);
@@ -153,25 +136,47 @@ void loop() {
     lv_timer_handler(); 
     ui_tick();
 
-    // --- LECTURA BMP180 ---
+    // 2. Sensores Ambientales (BMP)
     static unsigned long lastBMP = 0;
     if (millis() - lastBMP > 2000) {
-        float t = bmp.readTemperature();
-        float p = bmp.readPressure() / 100.0;
-        float a = bmp.readAltitude(SEA_LEVEL_PRESSURE_HPA);
-        
-        eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_TEMP_VALOR, eez::Value(t));
-        eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_PRES_VALOR, eez::Value((int)p));
-        eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_ALT_VALOR, eez::Value((int)a));
+        eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_TEMP_VALOR, eez::Value(bmp.readTemperature()));
+        eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_PRES_VALOR, eez::Value((int)(bmp.readPressure()/100.0)));
+        eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_ALT_VALOR, eez::Value((int)bmp.readAltitude(SEA_LEVEL_PRESSURE_HPA)));
         lastBMP = millis();
     }
 
-    // --- LÓGICA BIOMÉTRICA ---
+    // 3. Lógica Biométrica
     long irValue = particleSensor.getIR();
     bool estaPresente = (irValue > UMBRAL_PRESENCIA);
     eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_HAY_DEDO, eez::Value(estaPresente));
 
+    // Lectura de variables de EEZ Flow corregida (.toBool())
+    bool alarmaCronoActiva = eez::flow::getGlobalVariable(FLOW_GLOBAL_VARIABLE_ALARM_CRONO).toBool();
+    int umbralSaturacion = eez::flow::getGlobalVariable(FLOW_GLOBAL_VARIABLE_UMBRAL_ALARMA).toInt32();
+
     if (estaPresente) {
+        // --- Saturación ---
+        int spo2 = map(irValue, 80000, 160000, 95, 99);
+        if (spo2 > 100) spo2 = 100;
+        eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_SATURACION, eez::Value(spo2));
+
+        bool peligroSaturacion = (spo2 < umbralSaturacion);
+        eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_ALARMA, eez::Value(!peligroSaturacion));
+
+        // --- LÓGICA DE ALARMA UNIFICADA ---
+        // Suena si hay peligro de saturación O si el cronómetro terminó
+        if (peligroSaturacion || alarmaCronoActiva) {
+            if (millis() - tiempoBuzzer > 500) {
+                estadoBuzzer = !estadoBuzzer;
+                controlarBuzzer(estadoBuzzer);
+                tiempoBuzzer = millis();
+            }
+        } else {
+            controlarBuzzer(false);
+            estadoBuzzer = false;
+        }
+
+        // --- Pulso y LED ---
         if (checkForBeat(irValue)) {
             long delta = millis() - lastBeat;
             lastBeat = millis();
@@ -189,34 +194,23 @@ void loop() {
                 actualizarVisualizacionHistorial();
 
                 eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_FRECUVALOR, eez::Value(beatAvg));
-                
-                int spo2 = map(irValue, 80000, 160000, 95, 99);
-                if (spo2 > 100) spo2 = 100;
-                eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_SATURACION, eez::Value(spo2));
-
-                // --- LÓGICA DE ALARMA CON BUZZER ---
-                int umbralSlider = eez::flow::getGlobalVariable(FLOW_GLOBAL_VARIABLE_UMBRAL_ALARMA).toInt32();
-                bool hayPeligro = (spo2 < umbralSlider);
-                eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_ALARMA, eez::Value(!hayPeligro));
-
-                if (hayPeligro) {
-                    // Hacer que el buzzer suene intermitente (cada 500ms)
-                    if (millis() - tiempoBuzzer > 500) {
-                        estadoBuzzer = !estadoBuzzer;
-                        controlarBuzzer(estadoBuzzer);
-                        tiempoBuzzer = millis();
-                    }
-                } else {
-                    controlarBuzzer(false); // Apagar si ya no hay peligro
-                }
-
                 eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_FRECU_LED, eez::Value(255));
                 ledTurnOffTime = millis() + LED_DURATION;
             }
         }
     } else {
-        // Limpieza y APAGADO del buzzer si se retira el dedo
-        controlarBuzzer(false);
+        // Si no hay dedo, el buzzer solo suena si el crono lo pide
+        if (alarmaCronoActiva) {
+            if (millis() - tiempoBuzzer > 500) {
+                estadoBuzzer = !estadoBuzzer;
+                controlarBuzzer(estadoBuzzer);
+                tiempoBuzzer = millis();
+            }
+        } else {
+            controlarBuzzer(false);
+            estadoBuzzer = false;
+        }
+
         static unsigned long lastReset = 0;
         if (millis() - lastReset > 400) {
             eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_FRECUVALOR, eez::Value(0));
@@ -227,6 +221,7 @@ void loop() {
         }
     }
 
+    // Apagado del LED
     if (millis() > ledTurnOffTime) {
         eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_FRECU_LED, eez::Value(0));
     }
