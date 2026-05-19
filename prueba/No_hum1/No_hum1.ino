@@ -3,6 +3,7 @@
 #include <Arduino_GFX_Library.h>
 #include <lvgl.h>
 #include <Adafruit_BMP085.h> 
+#include "Adafruit_SHT31.h" // 1. Librería del sensor de humedad
 #include "TouchDrvGT911.hpp"
 #include "MAX30105.h"
 #include "heartRate.h" 
@@ -22,6 +23,7 @@ const int TAMANO_HISTORIAL = 10;
 // --- OBJETOS ---
 MAX30105 particleSensor;
 Adafruit_BMP085 bmp;
+Adafruit_SHT31 sht31 = Adafruit_SHT31(); // 2. Objeto del sensor de humedad
 TouchDrvGT911 touch;
 
 // --- PANTALLA ---
@@ -122,6 +124,11 @@ void setup() {
         particleSensor.setup(0x1F, 4, 2, 400, 411, 4096);
     }
     bmp.begin();
+    
+    // 3. Inicializar sensor de humedad (dirección 0x44 por defecto)
+    if (!sht31.begin(0x44)) {
+        Serial.println("No se encuentra el sensor SHT30");
+    }
 
     for(int i=0; i<TAMANO_HISTORIAL; i++) historialFrecu[i] = 0;
 }
@@ -136,13 +143,21 @@ void loop() {
     lv_timer_handler(); 
     ui_tick();
 
-    // 2. Sensores Ambientales (BMP)
-    static unsigned long lastBMP = 0;
-    if (millis() - lastBMP > 2000) {
+    // 2. Sensores Ambientales (BMP + SHT30)
+    static unsigned long lastAmbient = 0;
+    if (millis() - lastAmbient > 2000) {
+        // BMP085
         eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_TEMP_VALOR, eez::Value(bmp.readTemperature()));
         eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_PRES_VALOR, eez::Value((int)(bmp.readPressure()/100.0)));
         eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_ALT_VALOR, eez::Value((int)bmp.readAltitude(SEA_LEVEL_PRESSURE_HPA)));
-        lastBMP = millis();
+        
+        // 4. Lectura de Humedad (SHT30)
+        float h = sht31.readHumidity();
+        if (!isnan(h)) {
+            eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_HUM_VALOR, eez::Value(h));
+        }
+        
+        lastAmbient = millis();
     }
 
     // 3. Lógica Biométrica
@@ -150,12 +165,10 @@ void loop() {
     bool estaPresente = (irValue > UMBRAL_PRESENCIA);
     eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_HAY_DEDO, eez::Value(estaPresente));
 
-    // Lectura de variables de EEZ Flow corregida (.toBool())
     bool alarmaCronoActiva = eez::flow::getGlobalVariable(FLOW_GLOBAL_VARIABLE_ALARM_CRONO).toBool();
     int umbralSaturacion = eez::flow::getGlobalVariable(FLOW_GLOBAL_VARIABLE_UMBRAL_ALARMA).toInt32();
 
     if (estaPresente) {
-        // --- Saturación ---
         int spo2 = map(irValue, 80000, 160000, 95, 99);
         if (spo2 > 100) spo2 = 100;
         eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_SATURACION, eez::Value(spo2));
@@ -163,8 +176,6 @@ void loop() {
         bool peligroSaturacion = (spo2 < umbralSaturacion);
         eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_ALARMA, eez::Value(!peligroSaturacion));
 
-        // --- LÓGICA DE ALARMA UNIFICADA ---
-        // Suena si hay peligro de saturación O si el cronómetro terminó
         if (peligroSaturacion || alarmaCronoActiva) {
             if (millis() - tiempoBuzzer > 500) {
                 estadoBuzzer = !estadoBuzzer;
@@ -176,7 +187,6 @@ void loop() {
             estadoBuzzer = false;
         }
 
-        // --- Pulso y LED ---
         if (checkForBeat(irValue)) {
             long delta = millis() - lastBeat;
             lastBeat = millis();
@@ -199,7 +209,6 @@ void loop() {
             }
         }
     } else {
-        // Si no hay dedo, el buzzer solo suena si el crono lo pide
         if (alarmaCronoActiva) {
             if (millis() - tiempoBuzzer > 500) {
                 estadoBuzzer = !estadoBuzzer;
@@ -221,7 +230,6 @@ void loop() {
         }
     }
 
-    // Apagado del LED
     if (millis() > ledTurnOffTime) {
         eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_FRECU_LED, eez::Value(0));
     }

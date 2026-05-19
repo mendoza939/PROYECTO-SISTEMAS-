@@ -64,7 +64,6 @@ typedef struct _objects_t {
     lv_obj_t *titulo1_8;
     lv_obj_t *titulo1_9;
     lv_obj_t *titulo1_11;
-    lv_obj_t *airebar;
     lv_obj_t *titulo1_30;
     lv_obj_t *airebar_1;
     lv_obj_t *teclado;

@@ -58,7 +58,7 @@
 #define LV_FONT_MONTSERRAT_34 1
 #define LV_FONT_MONTSERRAT_36 1
 
-/* Deja las demás en 0 */
+/* Deja las demï¿½s en 0 */
 #define LV_FONT_MONTSERRAT_8  0
 #define LV_FONT_MONTSERRAT_10 0
 #define LV_FONT_MONTSERRAT_12 0
